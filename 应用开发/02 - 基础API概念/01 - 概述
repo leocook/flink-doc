@@ -1,0 +1,465 @@
+# 01 - 技术API概念
+Flink是实现分布式数据集转换（例如：filtering, mapping, updating state, joining, grouping, defining windows, aggregating）的常规程序。初始化数据集的方式有多种，例如：从本地文件、Kafka的topic、或内存中读取数据等等。结果通过sinks来返回，sinks可以把数据写入到（分布式）文件系统中，或者标准输出等等。Flink程序可以运行在多种环境中，可以是standalone，或者嵌入式运行在其它程序中。程序可以执行在本地JVM中，也可以在多台机器组成的集群上运行。
+
+可以根据数据源是有限数据源还是无限数据源，来决定写一个批处理程序还是流计算程序，DataSet API是用来编写批处理程序的，DataStream API是用来编写流计算程序的。本文是用来描述DataSet API和DataStream API一些公共的概念，关于具体如何开发，还需要看后续的<b>批处理开发说明</b>和<b>流计算开发向导</b>.
+
+注释：当展示具体如何使用StreamingExecutionEnvironment和DataStream API的例子时，里边提及到的概念和DataSet API都是一样的，只是在使用DataSet API的时候，我们使用了ExecutionEnvironment和DataSet类。
+
+## DataSet 和 DataStream
+Flink拥有特定的类DataSet和DataStream在程序中来表示数据。可以理解它们是一个可以包含重复数据的不可变集合。在使用DataSet的时候表示数据是有限的，但在使用DataStream的时候表示数据条数是无限的。
+
+它们和常规的Java集合存在着不同。首先，DataSet和DataStream是不可变集合，当它们被创建好后，集合内的数据是不可以插入新的数据，也不可以删除里边已经存在的数据，只能简单的来访问集合里的数据。
+
+在Flink程序中，可以通过创建一个source来初始化一个数据集，这些数据集可以通过调用map、filter等转换操作来获取到新的数据集。
+
+## Flink程序的结构
+Flink程序看起来就像是普通转换数据集的程序。每个程序都有一些相同的基础部分组成：
+
+- 获取一个执行环境environment
+- 通过加载/创建来初始化数据
+- 对数据执行指定的转换操作
+- 指定计算结果将会写到哪里去
+- 启动执行程序
+
+接下来将会给每一个步骤都做一下概述，请到各个小节中查看详情。
+
+在Java开发中，在包 org.apache.flink.api.java 下可以看到DataSet API所有的核心类，同时在包 org.apache.flink.streaming.api 下可以看到DataStream API所有的核心类。
+
+在Java开发中，在包 org.apache.flink.api.scala 下可以看到DataSet API所有的核心类，同时在包 org.apache.flink.streaming.api.scala 下可以看到DataStream API所有的核心类。
+
+StreamExecutionEnvironment是所有Flink程序的基础，可以通过StreamExecutionEnvironment类下面的这些静态方法来获取到：
+
+```
+Java:
+getExecutionEnvironment()
+createLocalEnvironment()
+createRemoteEnvironment(String host, int port, String... jarFiles)
+
+Scala:
+getExecutionEnvironment()
+createLocalEnvironment()
+createRemoteEnvironment(host: String, port: Int, jarFiles: String*)
+```
+
+一般情况下，你只需要使用 getExecutionEnvironment() 方法，因为它可以根据环境来得到正确的environment：当你在IDE内部执行Flink程序或者像一个常规程序一样执行Flink程序时，那么将会创建一个local environment，并在本地机器上执行程序；当你用你的程序创建一个Jar包，并且在Flink集群上通过命令行来程序，那么Flink集群将会执行main方法，并会通过getExecutionEnvironment()来cluster environment，并让程序在集群上执行。
+对于指定的sources，environment有多种方法从文件中读取数据：像CSV文件，你可以一行行来读取它们，也可以使用完全自定义的输入格式来读取数据。为了能从文本文件中读取到一连串行的数据，你可以执行下面的操作：
+
+```
+Java:
+final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+DataStream<String> text = env.readTextFile("file:///path/to/file");
+
+Scala:
+val env = StreamExecutionEnvironment.getExecutionEnvironment()
+val text: DataStream[String] = env.readTextFile("file:///path/to/file")
+```
+
+这样你就能到一个DataStream了，然后你还可以调用转换方法来创建新的DataStreams。
+下面是一个例子，通过执行DataStream的Map转换方法：
+
+```
+Java:
+DataStream<String> input = ...;
+DataStream<Integer> parsed = input.map(new MapFunction<String, Integer>() {
+    @Override
+    public Integer map(String value) {
+        return Integer.parseInt(value);
+    }
+});
+
+Scala:
+val input: DataSet[String] = ...
+val mapped = input.map { x => x.toInt }
+```
+
+我们可以转换原来数据集中的每条字符串为整数，来创建一个新的DataStream。
+
+只要你的DataStream存放的就是你的最终数据，你就可以通过创建一个sink来把DataStream写到外部系统中。这里有一些创建sink的例子：
+
+```
+Java:
+writeAsText(String path)
+print()
+
+Scala:
+writeAsText(path: String)
+print()
+```
+
+当你如上所述编写完了程序后，你需要通过调用StreamExecutionEnvironment的execute()方法来启动程序。程序是运行在本地还是集群，取决与你所创建的Environment对象。
+
+execute()方法会返回一个JobExecutionResult，其中包含运行时间和累加器结果。
+
+请查看 流计算开发向导 来更深入查看DataStream所支持的流数据的sources和sink相关信息。请查看 批处理开发向导 来更深入查看DataSet所支持的流数据的sources和sink相关信息。
+
+## 延迟计算
+所有的Flink程序都是被延迟计算的：
+
+当程序的main的方法被执行时，数据的加载和传输不会立刻执行。相反，所有的操作都会被创建，并且被添加到程序的执行计划中。当程序明确调用execute()方法后，程序才会正真的执行起来。程序具体是本地执行还是在集群上执行，取决于程序运行时的environment。
+
+延迟计算让程序通过运行执行计划中的一个个子计划，来完成复杂编程逻辑的构建。
+
+## 指定Key
+有些转换操作（join, coGroup, keyBy, groupBy）需要预先执行数据集中每个元素的key。还有其它的一些操作（Reduce, GroupReduce, Aggregate, Windows）允许数据在被处理前可以通过Key被分组。
+
+一个DataSet可以通过类似下面这样的操作来完成分组：
+
+```
+DataSet<...> input = // [...]
+DataSet<...> reduced = input
+  .groupBy(/*define key here*/)
+  .reduceGroup(/*do something*/);
+```
+
+同时，可以通下面这样的方式来指定DataStream的Key：
+
+```
+DataStream<...> input = // [...]
+DataStream<...> windowed = input
+  .keyBy(/*define key here*/)
+  .window(/*window specification*/);
+```
+
+Flink不是基于key-value键值对的数据模型。所以，你不需要将数据的物理类型打包到key和value中去。Key都是“虚拟的”，Key被定义为实际数据的函数，以指导分组操作。
+
+
+注释：接下来，我们将会使用DataStream API和keyBy来讨论。对于DataSet API，只需要用DataSet和groupBy来替换即可。
+
+### 为Tuple（元组）指定Key
+最简单的例子就是通过一个或者多个字段来给Tuple集合做分组,下面通过元组的第一个字段来给数据集分组:
+
+```
+Java：
+DataStream<Tuple3<Integer,String,Long>> input = // [...]
+KeyedStream<Tuple3<Integer,String,Long>,Tuple> keyed = input.keyBy(0)
+
+Scala：
+val input: DataStream[(Int, String, Long)] = // [...]
+val keyed = input.keyBy(0)
+```
+
+下面通过元组的第一个字段和第二个字段的组合来给数据集分组:
+
+```
+Java:
+DataStream<Tuple3<Integer,String,Long>> input = // [...]
+KeyedStream<Tuple3<Integer,String,Long>,Tuple> keyed = input.keyBy(0,1)
+
+Scala:
+val input: DataSet[(Int, String, Long)] = // [...]
+val grouped = input.groupBy(0,1)
+```
+
+关于嵌套元组，如果DataStream里的数据类型是嵌套元组，例如：
+
+```
+DataStream<Tuple3<Tuple2<Integer, Float>,String,Long>> ds;
+```
+
+当通过keyBy(0)来指定Key的时候，将会使用这个Tuple2元组来作为Key。当需要使用嵌套类型中的某个字段作为Key的时候，需要下面这样的字段表达式来指定。
+
+### 通过字段表达式来指定Key
+你可以通过字符串的“字段表达式”来指定嵌套元组数据的Key，然后在做grouping, sorting, joining, or coGrouping等转换操作。
+在复杂嵌套类型（例如Tuple和POJO类型）中，字段表达式可以非常简单的指定字段来作为Key。
+
+在下面的例子中，我们有一个包含两个字段（“word” 和 “count”）的WC POJO。为了能使用word字段来分组，我们只需要在keyBy()函数中填写上该字段名称即可：
+
+```
+Java:
+// some ordinary POJO (Plain old Java Object)
+public class WC {
+  public String word;
+  public int count;
+}
+DataStream<WC> words = // [...]
+DataStream<WC> wordCounts = words.keyBy("word").window(/*window specification*/);
+
+Scala:
+// some ordinary POJO (Plain old Java Object)
+class WC(var word: String, var count: Int) {
+  def this() { this("", 0L) }
+}
+val words: DataStream[WC] = // [...]
+val wordCounts = words.keyBy("word").window(/*window specification*/)
+
+// or, as a case class, which is less typing
+case class WC(word: String, count: Int)
+val words: DataStream[WC] = // [...]
+val wordCounts = words.keyBy("word").window(/*window specification*/)
+```
+
+字段表达式的语法如下：
+
+- 通过字段名称来选择POJO的字段作为Key。例如"user"表示POJO类型的"user"字段。
+- 通过元组的字段名称或字段下标（0开始）指定Key。例如"_1"（Java中是f0） 和 "5"指定的是元组的第1个和第6个字段。
+- 也可以在POJO 和 Tuple这些嵌套模式中指定Key。例如"user.zip"指向了一个存储在"user"字段的POJO类型中的“zip”字段。在一个POJO和Tuple混合的复杂类型中，还支持类似这样的写法："_2.user.zip"（Java中是"f1.user.zip"）或"user._4.1.zip"（Java中是"user.f3.1.zip"）。
+
+你可以通过使用"_"（Java中是"*"）通配符来表达所有类型。这个在不是Tuple或POJO的数据类型上也可以使用。
+
+字段表达式的例子:
+
+```
+public static class WC {
+  public ComplexNestedClass complex; //nested POJO
+  private int count;
+  // getter / setter for private field (count)
+  public int getCount() {
+    return count;
+  }
+  public void setCount(int c) {
+    this.count = c;
+  }
+}
+public static class ComplexNestedClass {
+  public Integer someNumber;
+  public float someFloat;
+  public Tuple3<Long, Long, String> word;
+  public IntWritable hadoopCitizen;
+}
+```
+
+上边的例子中存在一些有效的字段表达式：
+
+- "count": WC 类中的count字段。
+
+- "complex": 选择了complex字段下的所有字段，也就是POJO类型为ComplexNestedClass的所有字段。
+
+- "complex.word.f2": 选择了嵌套的Tuple3字段中的最后一个字段。
+
+- "complex.hadoopCitizen": 选择了Hadoop的IntWritable类型的字段hadoopCitizen。
+
+### 使用Key选择器函数来指定Key
+另外一个方法就是通过"key选择器"函数来指定Key。一个Key选择器函数将会使用一个元素作为输入，并通过这些元素来返回Key。从指定计算中返回Key，且Key可以是任意类型。
+
+下面的例子展示了key选择器函数简单的返回了对象中的字段：
+
+```
+Java:
+// some ordinary POJO
+public class WC {public String word; public int count;}
+DataStream<WC> words = // [...]
+KeyedStream<WC> keyed = words
+  .keyBy(new KeySelector<WC, String>() {
+     public String getKey(WC wc) { return wc.word; }
+   });
+   
+Scala:
+// some ordinary case class
+case class WC(word: String, count: Int)
+val words: DataStream[WC] = // [...]
+val keyed = words.keyBy( _.word )
+```
+
+## 指定转换（Transformation）函数
+绝大多数的转换操作都需要用户自定义函数的，本节将要列举展示多种定义函数的方式。
+
+### 关于Java API
+- 通过实现接口来定义函数
+
+通过实现接口来定义函数，这是定义函数的最基础方式：
+
+```
+class MyMapFunction implements MapFunction<String, Integer> {
+  public Integer map(String value) { return Integer.parseInt(value); }
+};
+data.map(new MyMapFunction());
+```
+
+- 匿名类
+
+可以通过定义一个匿名类来定义函数：
+
+```
+data.map(new MapFunction<String, Integer> () {
+  public Integer map(String value) { return Integer.parseInt(value); }
+});
+```
+
+- Java 8 Lambda表达式
+
+Flink同样支持Java 8 Lambda表达式：
+
+```
+data.filter(s -> s.startsWith("http://"));
+data.reduce((i1,i2) -> i1 + i2);
+```
+
+- Rich functions
+
+所有的转换操作所需要定义的函数，都可以使用实现一个rich function来表示，例如：
+
+```
+class MyMapFunction implements MapFunction<String, Integer> {
+  public Integer map(String value) { return Integer.parseInt(value); }
+};
+```
+
+可以被写成：
+
+```
+class MyMapFunction extends RichMapFunction<String, Integer> {
+  public Integer map(String value) { return Integer.parseInt(value); }
+};
+```
+
+通常通过下面的方式在map转换操作中访问函数：
+
+```
+data.map(new MyMapFunction());
+```
+
+Rich functions也可以被定位成一个匿名类:
+
+```
+data.map (new RichMapFunction<String, Integer>() {
+  public Integer map(String value) { return Integer.parseInt(value); }
+});
+```
+
+Rich functions中除了实现用户需要实现的自定义方法（map、reduce等等），还有4个方法：open, close, getRuntimeContext, 和 setRuntimeContext。这样在给函数传入参数（可以查看这里），创建和完成本地状态，访问广播变量（查看广播变量相关），还可以访问运行时信息，例如累加器和计数器（accumulator和counter），以及存放在迭代器中的数据（迭代器相关）。
+
+## 支持的数据类型
+Flink对DataSet和DataStream中元素的数据类型做了一些限制，原因是为了让系统能确认出高效的执行策略。
+下面是6中不同分类的数据类型：
+
+- Java Tuple和Scala Case Classes
+- Java POJOs
+- 原始类型
+- 普通类类型
+- 值类型
+- 实现了Hadoop Writables接口的类型
+- 特殊类型
+
+### Java Tuple和Scala Case Classes
+
+#### Java
+
+Tuples是一个包含固定字段个数的复合类型。Java API提供Tuple1到Tuple25元组类。元组中每个字段的类型可以是Flink的任何类型，包括元组类型，以及嵌套元组类型。若要访问元组字段可以通过字段名字来访问，例如<b>tuple.f4</b>，从f0开始；或者使用getter方法，例如tuple.getField(int position)。索引从0开始。注意这和Scala tuple有着鲜明的区别，但是和Java常规的索引方式比较一致。
+
+```
+DataStream<Tuple2<String, Integer>> wordCounts = env.fromElements(
+    new Tuple2<String, Integer>("hello", 1),
+    new Tuple2<String, Integer>("world", 2));
+
+wordCounts.map(new MapFunction<Tuple2<String, Integer>, Integer>() {
+    @Override
+    public Integer map(Tuple2<String, Integer> value) throws Exception {
+        return value.f1;
+    }
+});
+
+wordCounts.keyBy(0); // also valid .keyBy("f0")
+```
+
+#### Scala
+
+Scala的case classes（包括Scala元组，Scala元组是一种特殊的元组类），是一种包含固定字段数量、多种字段类型的复合类型。元组字段的地址是从1开始的，例如"_1"表示它的第一个字段。Case class则是通过字段的名称来访问字段值。
+
+```
+case class WordCount(word: String, count: Int)
+val input = env.fromElements(
+    WordCount("hello", 1),
+    WordCount("world", 2)) // Case Class Data Set
+
+input.keyBy("word")// key by field expression "word"
+
+val input2 = env.fromElements(("hello", 1), ("world", 2)) // Tuple2 Data Set
+
+input2.keyBy(0, 1) // key by field positions 0 and 1
+```
+
+### Java POJOs
+当满足下面下面的所有条件时，Java和Scala类可被Flink视为一个特殊的数据类型：
+
+- 类必须要是公共类.
+- 必须要包含一个公开的无参构造方法（默认构造方法）.
+- 所有的字段要么是public类型，要么就是能够通过getter和setter方法来访问。例如字段名字叫foo，那么getter和setter方法就被命名为getFoo()和setFoo()。
+- 字段类型必须要是Flink支持才可以。目前，Flink使用Avro来序列化任意对象，例如Date。
+
+Flink分析POJO类型的结构，即了解POJO的字段。因此，POJO类型比一般类型更容易使用。此外，Flink可以比处理一般类型更有效的处理POJO类型。
+
+下面的这个例子一个简单的POJO类和它的两个公开字段。
+
+```
+- Java
+public class WordWithCount {
+
+    public String word;
+    public int count;
+
+    public WordWithCount() {}
+
+    public WordWithCount(String word, int count) {
+        this.word = word;
+        this.count = count;
+    }
+}
+
+DataStream<WordWithCount> wordCounts = env.fromElements(
+    new WordWithCount("hello", 1),
+    new WordWithCount("world", 2));
+
+wordCounts.keyBy("word"); // key by field expression "word"
+
+
+- Scala
+class WordWithCount(var word: String, var count: Int) {
+    def this() {
+      this(null, -1)
+    }
+}
+
+val input = env.fromElements(
+    new WordWithCount("hello", 1),
+    new WordWithCount("world", 2)) // Case Class Data Set
+
+input.keyBy("word")// key by field expression "word"
+```
+
+### 原始类型
+Flink支持所有Java和Scala的原始类型，例如Integer, String, 和Double等等。
+
+### 普通类类型
+Flink支持绝大多数的Java和Scala类的（SDK API提供的和自定义的）。包含无法被序列化的字段的类是不行的，例如文件指针，I/O流，或者其它本地资源。一般遵循Java Bena规范的类都能够很好的被使用。
+
+所有不能被定义为"POJO类型"的类都会Flink识别为"普通类类型"。Flink只能对这些数据做黑箱处理，不能访问数据内容（即，为了有效排序）。普通类类型使用Kryo框架来序列化和反序列化。
+
+### 值类型
+值类型需要手动的序列化和反序列化。不是通过常规的序列化框架，而是通过硬编码实现这些操作。实现 org.apache.flinktypes.Value 接口并实现read和write方法。当通用的序列化方式效率比较低下的时候，使用值类型将会更合理。举个例子：使用一个数组来实现稀疏向量。目前知道数组中绝大多数值都是0，那么久可以只对对非零元素进行特殊编码，然而常规的序列化方式只会简单的对数组中的所有字段做特殊编码。
+
+org.apache.flinktypes.CopyableValue接口以类似的方式支持手动内部克隆逻辑。
+
+Flink带有与基本数据类型对应的预定义值类型。(ByteValue, ShortValue, IntValue, LongValue, FloatValue, DoubleValue, StringValue, CharValue, BooleanValue)。这些类型充当了基本数据类型的可变变体：它们的值可以被修改，允许程序重复使用值类型对象，减轻了GC的压力。
+
+### Hadoop Writables
+开发人员可以使用实现了 org.apache.hadoop.Writable 接口的类型。write()和readFields()方法实现的序列化逻辑将会用来执行序列化。
+
+### 特殊类型
+开发者可以使用特殊类型，包括Scala的Either，Option, and Try类型。Java API有它自定义实现的Either。和Scala的Either相似，它有两个可能的类型，Left 或 Right。Either在捕获异常，或者某些操作需要输出两个不同类型数据的场景里比较实用。
+
+### 类型擦除 & 类型推测
+注意：本节只和Java有关系。
+
+编译完成后，Java编译器会抛出一些类型生成信息。这在Java中被称之为“类型擦除”。这意味着在运行期间，对象的接口不再知道它的普通类型是什么。例如，DataStream<String> 和 DataStream<Long>在JVM中看起来是一样的。
+
+Flink在准备执行的时候（当main方法被调用的时候）需要类型信息。Flink Java API将会尝试重建类型信息，并明确的存储在数据集和操作符中。你可以通过DataStream.getType()来检索类型。该方法会返回一个TypeInformation类的实例，它是Flink内部表示类型的方式。
+
+类型接口在某些时候存在自身的限制，需要程序开发者的协助。例如：从集和中创建数据集，例如 ExecutionEnvironment.fromCollection() ，你可以通过传入一个参数来描述类型。当然像MapFunction<I, O>这样的普通函数也需要其它类型信息。
+
+ResultTypeQueryable接口可以实现通过输入格式和函数，来明确告知API的返回类型。 执行函数的输入类型通常可以通过上一个操作的结果类型来推断。
+
+## 累加器 & 计时器
+累加器是由一个加法操作和最终累加结果简单构造而来，可在作业结束后使用。
+
+最直接的累加器就是：使用Accumulator.add(V value)方法来完成累加。在Flink作业的结束时，它会合并作业分区的结果，并且把结果发送到客户端。在调试过程中，如果你想更快的获取更多信息时，Accumulators就显的格外实用。
+
+Flink目前有一下内置的计数器。它们每个都实现了Accumulator接口。
+
+- IntCounter, LongCounter 和 DoubleCounter：下面有例子如何使用这个计数器。
+- Histogram: 为了计算离散数据分桶实现了histogram。它在内部就是一个整数到另一个整数的映射。你可以用这个来计算数值的分布，例如字数统计程序统计每行字数的分布。
+
+
+## 疑问
+
+- Flink嵌入式运行在其它程序中，如何运行呢？
+
